@@ -23,7 +23,6 @@ import (
 	"github.com/gohugoio/hugo/hugofs"
 	"github.com/gohugoio/hugo/hugolib/filesystems"
 	"github.com/gohugoio/hugo/hugolib/paths"
-	"github.com/gohugoio/hugo/media"
 
 	"github.com/spf13/afero"
 
@@ -50,24 +49,20 @@ func TestOptionKey(t *testing.T) {
 func TestToBuildOptions(t *testing.T) {
 	c := qt.New(t)
 
-	opts, err := toBuildOptions(Options{mediaType: media.Builtin.JavascriptType})
+	opts, err := toBuildOptions(Options{})
 
 	c.Assert(err, qt.IsNil)
 	c.Assert(opts, qt.DeepEquals, api.BuildOptions{
 		Bundle: true,
 		Target: api.ESNext,
 		Format: api.FormatIIFE,
-		Stdin: &api.StdinOptions{
-			Loader: api.LoaderJS,
-		},
 	})
 
 	opts, err = toBuildOptions(Options{
-		Target:    "es2018",
-		Format:    "cjs",
-		Minify:    true,
-		mediaType: media.Builtin.JavascriptType,
-		AvoidTDZ:  true,
+		Target:   "es2018",
+		Format:   "cjs",
+		Minify:   true,
+		AvoidTDZ: true,
 	})
 	c.Assert(err, qt.IsNil)
 	c.Assert(opts, qt.DeepEquals, api.BuildOptions{
@@ -77,13 +72,10 @@ func TestToBuildOptions(t *testing.T) {
 		MinifyIdentifiers: true,
 		MinifySyntax:      true,
 		MinifyWhitespace:  true,
-		Stdin: &api.StdinOptions{
-			Loader: api.LoaderJS,
-		},
 	})
 
 	opts, err = toBuildOptions(Options{
-		Target: "es2018", Format: "cjs", Minify: true, mediaType: media.Builtin.JavascriptType,
+		Target: "es2018", Format: "cjs", Minify: true,
 		SourceMap: "inline",
 	})
 	c.Assert(err, qt.IsNil)
@@ -95,13 +87,10 @@ func TestToBuildOptions(t *testing.T) {
 		MinifySyntax:      true,
 		MinifyWhitespace:  true,
 		Sourcemap:         api.SourceMapInline,
-		Stdin: &api.StdinOptions{
-			Loader: api.LoaderJS,
-		},
 	})
 
 	opts, err = toBuildOptions(Options{
-		Target: "es2018", Format: "cjs", Minify: true, mediaType: media.Builtin.JavascriptType,
+		Target: "es2018", Format: "cjs", Minify: true,
 		SourceMap: "inline",
 	})
 	c.Assert(err, qt.IsNil)
@@ -113,13 +102,10 @@ func TestToBuildOptions(t *testing.T) {
 		MinifySyntax:      true,
 		MinifyWhitespace:  true,
 		Sourcemap:         api.SourceMapInline,
-		Stdin: &api.StdinOptions{
-			Loader: api.LoaderJS,
-		},
 	})
 
 	opts, err = toBuildOptions(Options{
-		Target: "es2018", Format: "cjs", Minify: true, mediaType: media.Builtin.JavascriptType,
+		Target: "es2018", Format: "cjs", Minify: true,
 		SourceMap: "external",
 	})
 	c.Assert(err, qt.IsNil)
@@ -131,23 +117,16 @@ func TestToBuildOptions(t *testing.T) {
 		MinifySyntax:      true,
 		MinifyWhitespace:  true,
 		Sourcemap:         api.SourceMapExternal,
-		Stdin: &api.StdinOptions{
-			Loader: api.LoaderJS,
-		},
 	})
 
 	opts, err = toBuildOptions(Options{
-		mediaType: media.Builtin.JavascriptType,
-		JSX:       "automatic", JSXImportSource: "preact",
+		JSX: "automatic", JSXImportSource: "preact",
 	})
 	c.Assert(err, qt.IsNil)
 	c.Assert(opts, qt.DeepEquals, api.BuildOptions{
-		Bundle: true,
-		Target: api.ESNext,
-		Format: api.FormatIIFE,
-		Stdin: &api.StdinOptions{
-			Loader: api.LoaderJS,
-		},
+		Bundle:          true,
+		Target:          api.ESNext,
+		Format:          api.FormatIIFE,
 		JSX:             api.JSXAutomatic,
 		JSXImportSource: "preact",
 	})
@@ -174,8 +153,7 @@ func TestToBuildOptionsTarget(t *testing.T) {
 	} {
 		c.Run(test.target, func(c *qt.C) {
 			opts, err := toBuildOptions(Options{
-				Target:    test.target,
-				mediaType: media.Builtin.JavascriptType,
+				Target: test.target,
 			})
 			c.Assert(err, qt.IsNil)
 			c.Assert(opts.Target, qt.Equals, test.expect)

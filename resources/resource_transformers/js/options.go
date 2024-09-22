@@ -23,12 +23,12 @@ import (
 	"github.com/gohugoio/hugo/common/maps"
 	"github.com/gohugoio/hugo/common/paths"
 	"github.com/gohugoio/hugo/identity"
+	"github.com/gohugoio/hugo/resources/resource"
 	"github.com/spf13/afero"
 
 	"github.com/evanw/esbuild/pkg/api"
 
 	"github.com/gohugoio/hugo/hugofs"
-	"github.com/gohugoio/hugo/media"
 	"github.com/mitchellh/mapstructure"
 )
 
@@ -106,11 +106,16 @@ type Options struct {
 	// TODO(bep) remove. See https://github.com/evanw/esbuild/commit/869e8117b499ca1dbfc5b3021938a53ffe934dba
 	AvoidTDZ bool
 
+	// This is a slice of files that each serve as an input to the bundling algorithm.
+	// The filenames must be relative to /assets.
+	//
+	// See https://esbuild.github.io/api/#entry-points
+	EntryPoints []any
+
 	// Code shared between multiple entry points is split off into a separate shared file that both entry points import.
 	// See https://esbuild.github.io/api/#splitting
 	Splitting bool
 
-	mediaType  media.Type
 	outDir     string
 	contents   string
 	sourceDir  string
@@ -131,6 +136,16 @@ func decodeOptions(m map[string]any) (Options, error) {
 
 	opts.Target = strings.ToLower(opts.Target)
 	opts.Format = strings.ToLower(opts.Format)
+
+	for i, ext := range opts.EntryPoints {
+		switch v := ext.(type) {
+		case string:
+		case resource.Resource:
+			opts.EntryPoints[i] = strings.TrimPrefix(v.Name(), "/")
+		default:
+			return opts, fmt.Errorf("invalid entry point type: %T", ext)
+		}
+	}
 
 	return opts, nil
 }
@@ -357,28 +372,6 @@ func toBuildOptions(opts Options) (buildOptions api.BuildOptions, err error) {
 		return
 	}
 
-	mediaType := opts.mediaType
-	if mediaType.IsZero() {
-		mediaType = media.Builtin.JavascriptType
-	}
-
-	var loader api.Loader
-	switch mediaType.SubType {
-	// TODO(bep) ESBuild support a set of other loaders, but I currently fail
-	// to see the relevance. That may change as we start using this.
-	case media.Builtin.JavascriptType.SubType:
-		loader = api.LoaderJS
-	case media.Builtin.TypeScriptType.SubType:
-		loader = api.LoaderTS
-	case media.Builtin.TSXType.SubType:
-		loader = api.LoaderTSX
-	case media.Builtin.JSXType.SubType:
-		loader = api.LoaderJSX
-	default:
-		err = fmt.Errorf("unsupported Media Type: %q", opts.mediaType)
-		return
-	}
-
 	var format api.Format
 	// One of: iife, cjs, esm
 	switch opts.Format {
@@ -419,9 +412,10 @@ func toBuildOptions(opts Options) (buildOptions api.BuildOptions, err error) {
 
 	// By default we only need to specify outDir and no outFile
 	outDir := opts.outDir
-	outFile := ""
 	var sourceMap api.SourceMap
 	switch opts.SourceMap {
+	case "linked":
+		sourceMap = api.SourceMapLinked
 	case "inline":
 		sourceMap = api.SourceMapInline
 	case "external":
@@ -433,9 +427,13 @@ func toBuildOptions(opts Options) (buildOptions api.BuildOptions, err error) {
 		return
 	}
 
+	entryPoints := make([]string, len(opts.EntryPoints))
+	for i, e := range opts.EntryPoints {
+		entryPoints[i] = e.(string)
+	}
+
 	buildOptions = api.BuildOptions{
-		Outfile: outFile,
-		Bundle:  true,
+		Bundle: true,
 
 		Target:    target,
 		Format:    format,
@@ -458,13 +456,8 @@ func toBuildOptions(opts Options) (buildOptions api.BuildOptions, err error) {
 
 		Tsconfig: opts.tsConfig,
 
-		Stdin: &api.StdinOptions{
-			Contents:   opts.contents,
-			ResolveDir: opts.resolveDir,
-			Loader:     loader,
-		},
-
-		Splitting: opts.Splitting,
+		EntryPoints: entryPoints,
+		Splitting:   opts.Splitting,
 	}
 	return
 }
