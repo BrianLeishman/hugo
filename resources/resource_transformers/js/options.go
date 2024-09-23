@@ -458,6 +458,7 @@ func toBuildOptions(opts Options) (buildOptions api.BuildOptions, err error) {
 
 		Loader: map[string]api.Loader{
 			".svg": api.LoaderText,
+			".ttf": api.LoaderDataURL,
 		},
 
 		EntryPoints: entryPoints,
