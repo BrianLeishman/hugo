@@ -456,6 +456,10 @@ func toBuildOptions(opts Options) (buildOptions api.BuildOptions, err error) {
 
 		Tsconfig: opts.tsConfig,
 
+		Loader: map[string]api.Loader{
+			".svg": api.LoaderText,
+		},
+
 		EntryPoints: entryPoints,
 		Splitting:   opts.Splitting,
 	}
