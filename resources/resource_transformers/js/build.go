@@ -20,7 +20,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/spf13/afero"
 
@@ -83,7 +86,6 @@ func (t *buildTransformation) Transform(ctx *resources.ResourceTransformationCtx
 	opts.sourceDir = filepath.FromSlash(path.Dir(ctx.SourcePath))
 	opts.resolveDir = t.c.rs.Cfg.BaseConfig().WorkingDir // where node_modules gets resolved
 	opts.contents = string(src)
-	opts.mediaType = ctx.InMediaType
 	opts.tsConfig = t.c.rs.ResolveJSConfigFile("tsconfig.json")
 
 	buildOptions, err := toBuildOptions(opts)
@@ -96,22 +98,11 @@ func (t *buildTransformation) Transform(ctx *resources.ResourceTransformationCtx
 		return err
 	}
 
-	if (buildOptions.Sourcemap == api.SourceMapExternal || buildOptions.Splitting) && buildOptions.Outdir == "" {
-		buildOptions.Outdir, err = os.MkdirTemp(os.TempDir(), "compileOutput")
-		if err != nil {
-			return err
-		}
-		defer os.Remove(buildOptions.Outdir)
+	buildOptions.Outdir, err = os.MkdirTemp(os.TempDir(), "compileOutput")
+	if err != nil {
+		return err
 	}
-
-	if buildOptions.Sourcemap != api.SourceMapNone {
-		m := resolveComponentInAssets(t.c.rs.Assets.Fs, ctx.SourcePath)
-		filename, err := filepath.Rel(opts.resolveDir, m.Filename)
-		if err != nil {
-			return fmt.Errorf("failed to resolve filename: %w", err)
-		}
-		buildOptions.Stdin.Sourcefile = filename
-	}
+	defer os.Remove(buildOptions.Outdir)
 
 	if opts.Inject != nil {
 		// Resolve the absolute filenames.
@@ -133,6 +124,26 @@ func (t *buildTransformation) Transform(ctx *resources.ResourceTransformationCtx
 
 		buildOptions.Inject = opts.Inject
 
+	}
+
+	if len(buildOptions.EntryPoints) == 0 {
+		buildOptions.EntryPoints = []string{ctx.SourcePath}
+	}
+
+	// Resolve the absolute filenames.
+	for i, ext := range buildOptions.EntryPoints {
+		impPath := filepath.FromSlash(ext)
+		if filepath.IsAbs(impPath) {
+			return fmt.Errorf("entryPoints: absolute paths not supported, must be relative to /assets")
+		}
+
+		m := resolveComponentInAssets(t.c.rs.Assets.Fs, impPath)
+
+		if m == nil {
+			return fmt.Errorf("entryPoints: file %q not found", ext)
+		}
+
+		buildOptions.EntryPoints[i] = m.Filename
 	}
 
 	result := api.Build(buildOptions)
@@ -200,46 +211,82 @@ func (t *buildTransformation) Transform(ctx *resources.ResourceTransformationCtx
 		return errors[0]
 	}
 
-	// If we are splitting, then there will be multiple output files,
-	// and we need to figure out which is the "main" one.
 	var (
+		// even though we may have multiple output files, we need to get the outfile that corresponds
+		// with the first entry point so we can return its contents for the resulting resource
 		outFile    string
 		outputFile api.OutputFile
 	)
-	if buildOptions.Sourcemap == api.SourceMapExternal || buildOptions.Splitting {
-		outFile = filepath.Join(buildOptions.Outdir, "stdin.js")
 
-		for _, f := range result.OutputFiles {
-			if f.Path == outFile {
-				outputFile = f
-				break
-			}
+	// build a list of all entrypoints in the output dir so we can differentiate between entry points and additionally created chunks
+	entryPointsMap := make(map[string]struct{}, len(buildOptions.EntryPoints))
+	outBase := lowestCommonAncestorDirectory(buildOptions.EntryPoints)
+
+	// we need to know the full paths of the entry points in the output
+	for i, e := range buildOptions.EntryPoints {
+		// remove starting common path
+		name := strings.TrimPrefix(e, outBase)
+
+		// remove extension, replace with ".js" (js.Build doesn't support CSS so this is the only option)
+		name = strings.TrimSuffix(name, filepath.Ext(name)) + ".js"
+
+		// add tmp dir prefix
+		name = filepath.Join(buildOptions.Outdir, name)
+
+		// add entry point to map
+		entryPointsMap[name] = struct{}{}
+
+		if i == 0 {
+			outFile = name
 		}
 	}
 
-	if buildOptions.Splitting {
-		// "Publish" the additional files that were created so the imports work
-		for _, f := range result.OutputFiles {
-			if f.Path == outFile {
-				continue
-			}
+	for _, f := range result.OutputFiles {
+		if f.Path == outFile {
+			outputFile = f
+			break
+		}
+	}
 
-			relPath, err := filepath.Rel(filepath.Dir(outputFile.Path), f.Path)
-			if err != nil {
-				return err
-			}
-			relPath = filepath.Join(filepath.Dir(ctx.OutPath), relPath)
+	outDir := filepath.Dir(ctx.OutPath)
 
-			if err = ctx.Publish(relPath, string(f.Contents)); err != nil {
-				return err
-			}
+	// "Publish" the additional files that were created so the imports & sourcemaps work
+	for _, f := range result.OutputFiles {
+		path := strings.TrimPrefix(f.Path, buildOptions.Outdir)
+		path = filepath.Join(outDir, path)
+
+		// if _, ok := entryPointsMap[f.Path]; ok {
+		// 	TODO: mount to assets somehow?
+		// }
+
+		if err = ctx.Publish(path, string(f.Contents)); err != nil {
+			return err
 		}
 	}
 
 	if buildOptions.Sourcemap == api.SourceMapExternal {
+		// add it to the output file to keep "external" working as originally intended
 		content := string(outputFile.Contents)
 		symPath := path.Base(ctx.OutPath) + ".map"
 		content += "\n//# sourceMappingURL=" + symPath + "\n"
+
+		for _, f := range result.OutputFiles {
+			if f.Path == outFile+".map" {
+				if err = ctx.PublishSourceMap(string(f.Contents)); err != nil {
+					return err
+				}
+				break
+			}
+		}
+		_, err := ctx.To.Write([]byte(content))
+		if err != nil {
+			return err
+		}
+	} else if buildOptions.Sourcemap == api.SourceMapLinked {
+		content := string(outputFile.Contents)
+		symPath := path.Base(ctx.OutPath) + ".map"
+		re := regexp.MustCompile(`//# sourceMappingURL=.*\n?`)
+		content = re.ReplaceAllString(content, "//# sourceMappingURL="+symPath+"\n")
 
 		for _, f := range result.OutputFiles {
 			if f.Path == outFile+".map" {
@@ -268,4 +315,55 @@ func (c *Client) Process(res resources.ResourceTransformer, opts map[string]any)
 	return res.Transform(
 		&buildTransformation{c: c, optsm: opts},
 	)
+}
+
+// lowestCommonAncestorDirectory returns the lowest common directory of the given entry points.
+// See https://github.com/evanw/esbuild/blob/d34e79e2a998c21bb71d57b92b0017ca11756912/internal/bundler/bundler.go#L1957
+func lowestCommonAncestorDirectory(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+
+	lowestAbsDir := filepath.Dir(paths[0])
+
+	for _, path := range paths[1:] {
+		absDir := filepath.Dir(path)
+		lastSlash := 0
+		a := 0
+		b := 0
+
+		for {
+			runeA, widthA := utf8.DecodeRuneInString(absDir[a:])
+			runeB, widthB := utf8.DecodeRuneInString(lowestAbsDir[b:])
+			boundaryA := widthA == 0 || runeA == '/' || runeA == '\\'
+			boundaryB := widthB == 0 || runeB == '/' || runeB == '\\'
+
+			if boundaryA && boundaryB {
+				if widthA == 0 || widthB == 0 {
+					// Truncate to the smaller path if one path is a prefix of the other
+					lowestAbsDir = absDir[:a]
+					break
+				} else {
+					// Track the longest common directory so far
+					lastSlash = a
+				}
+			} else if boundaryA != boundaryB || unicode.ToLower(runeA) != unicode.ToLower(runeB) {
+				// If we're at the top-level directory, then keep the slash
+				if lastSlash < len(absDir) && !strings.ContainsAny(absDir[:lastSlash], "\\/") {
+					lastSlash++
+				}
+
+				// If both paths are different at this point, stop and set the lowest so
+				// far to the common parent directory. Compare using a case-insensitive
+				// comparison to handle paths on Windows.
+				lowestAbsDir = absDir[:lastSlash]
+				break
+			}
+
+			a += widthA
+			b += widthB
+		}
+	}
+
+	return lowestAbsDir
 }
