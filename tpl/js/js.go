@@ -43,7 +43,7 @@ type Namespace struct {
 }
 
 // Build processes the given Resource with ESBuild.
-func (ns *Namespace) Build(args ...any) (resource.Resource, error) {
+func (ns *Namespace) Build(args ...any) (any, error) {
 	var (
 		r          resources.ResourceTransformer
 		m          map[string]any

@@ -27,10 +27,14 @@ import (
 
 	"github.com/spf13/afero"
 
+	"github.com/gohugoio/hugo/cache/dynacache"
 	"github.com/gohugoio/hugo/hugofs"
+	"github.com/gohugoio/hugo/identity"
 	"github.com/gohugoio/hugo/media"
 
+	"github.com/gohugoio/hugo/common/hashing"
 	"github.com/gohugoio/hugo/common/herrors"
+	"github.com/gohugoio/hugo/common/hugio"
 	"github.com/gohugoio/hugo/common/text"
 
 	"github.com/gohugoio/hugo/hugolib/filesystems"
@@ -219,7 +223,7 @@ func (t *buildTransformation) Transform(ctx *resources.ResourceTransformationCtx
 	)
 
 	// build a list of all entrypoints in the output dir so we can differentiate between entry points and additionally created chunks
-	entryPointsMap := make(map[string]struct{}, len(buildOptions.EntryPoints))
+	entryPointsMap := make(map[string]struct{}, len(buildOptions.EntryPoints)*2)
 	outBase := lowestCommonAncestorDirectory(buildOptions.EntryPoints)
 
 	// we need to know the full paths of the entry points in the output
@@ -227,42 +231,70 @@ func (t *buildTransformation) Transform(ctx *resources.ResourceTransformationCtx
 		// remove starting common path
 		name := strings.TrimPrefix(e, outBase)
 
-		// remove extension, replace with ".js" (js.Build doesn't support CSS so this is the only option)
-		name = strings.TrimSuffix(name, filepath.Ext(name)) + ".js"
+		// remove extensio
+		name = strings.TrimSuffix(name, filepath.Ext(name))
 
 		// add tmp dir prefix
 		name = filepath.Join(buildOptions.Outdir, name)
+		nameJS := name + ".js"
 
 		// add entry point to map
-		entryPointsMap[name] = struct{}{}
+		entryPointsMap[nameJS] = struct{}{}
+		entryPointsMap[name+".css"] = struct{}{}
 
 		if i == 0 {
-			outFile = name
-		}
-	}
-
-	for _, f := range result.OutputFiles {
-		if f.Path == outFile {
-			outputFile = f
-			break
+			outFile = nameJS
 		}
 	}
 
 	outDir := filepath.Dir(ctx.OutPath)
 
-	// "Publish" the additional files that were created so the imports & sourcemaps work
+	rsc := make(resource.Resources, 0, len(entryPointsMap))
+
+	// "Publish" the additional files that were created so the chunks & sourcemaps work
 	for _, f := range result.OutputFiles {
+		if f.Path == outFile {
+			continue
+		}
+
 		path := strings.TrimPrefix(f.Path, buildOptions.Outdir)
 		path = filepath.Join(outDir, path)
 
-		// if _, ok := entryPointsMap[f.Path]; ok {
-		// 	TODO: mount to assets somehow?
-		// }
+		if _, ok := entryPointsMap[f.Path]; ok {
+			var mediaType media.Type
+			switch filepath.Ext(f.Path) {
+			case ".js":
+				mediaType = media.Builtin.JavascriptType
+			case ".css":
+				mediaType = media.Builtin.CSSType
+			}
+
+			key := dynacache.CleanKey(path) + hashing.MD5FromStringHexEncoded(string(f.Contents))
+			r, err := t.c.rs.ResourceCache.GetOrCreate(key, func() (resource.Resource, error) {
+				return t.c.rs.NewResource(
+					resources.ResourceSourceDescriptor{
+						LazyPublish:   true,
+						MediaType:     mediaType,
+						GroupIdentity: identity.Anonymous, // All usage of this resource are tracked via its string content.
+						OpenReadSeekCloser: func() (hugio.ReadSeekCloser, error) {
+							return hugio.NewReadSeekerNoOpCloserFromBytes(f.Contents), nil
+						},
+						TargetPath: path,
+					})
+			})
+			if err != nil {
+				return err
+			}
+			rsc = append(rsc, r)
+			continue
+		}
 
 		if err = ctx.Publish(path, string(f.Contents)); err != nil {
 			return err
 		}
 	}
+
+	fmt.Println(rsc)
 
 	if buildOptions.Sourcemap == api.SourceMapExternal {
 		// add it to the output file to keep "external" working as originally intended
@@ -311,7 +343,7 @@ func (t *buildTransformation) Transform(ctx *resources.ResourceTransformationCtx
 }
 
 // Process process esbuild transform
-func (c *Client) Process(res resources.ResourceTransformer, opts map[string]any) (resource.Resource, error) {
+func (c *Client) Process(res resources.ResourceTransformer, opts map[string]any) (any, error) {
 	return res.Transform(
 		&buildTransformation{c: c, optsm: opts},
 	)
