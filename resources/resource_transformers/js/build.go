@@ -62,6 +62,7 @@ func New(fs *filesystems.SourceFilesystem, rs *resources.Spec) *Client {
 type buildTransformation struct {
 	optsm map[string]any
 	c     *Client
+	res   resource.Resources
 }
 
 func (t *buildTransformation) Key() internal.ResourceTransformationKey {
@@ -243,24 +244,52 @@ func (t *buildTransformation) Transform(ctx *resources.ResourceTransformationCtx
 		entryPointsMap[name+".css"] = struct{}{}
 
 		if i == 0 {
-			outFile = nameJS
+			outFile = name
 		}
 	}
 
-	outDir := filepath.Dir(ctx.OutPath)
-
-	rsc := make(resource.Resources, 0, len(entryPointsMap))
-
-	// "Publish" the additional files that were created so the chunks & sourcemaps work
 	for _, f := range result.OutputFiles {
 		if f.Path == outFile {
+			outputFile = f
+			break
+		}
+	}
+
+	var (
+		// entryPointFiles are the files that we expect to be referencing,
+		// such as the literal js/ts file we gave it, or the matching css file.
+		entryPointFiles []api.OutputFile
+
+		// addlFiles is the source maps and chunks that are created, things that we aren't
+		// expecting to manually publish, but that just need to be there for importing or debugging.
+		addlFiles []api.OutputFile
+	)
+
+	outDir := filepath.Dir(ctx.OutPath)
+
+	for _, f := range result.OutputFiles {
+		if f.Path == outFile {
+			// this one's already the main resource, so we don't want to make it again
 			continue
 		}
 
+		realPath := f.Path
+
 		path := strings.TrimPrefix(f.Path, buildOptions.Outdir)
 		path = filepath.Join(outDir, path)
+		f.Path = path
 
-		if _, ok := entryPointsMap[f.Path]; ok {
+		if _, ok := entryPointsMap[realPath]; ok {
+			entryPointFiles = append(entryPointFiles, f)
+		} else {
+			addlFiles = append(addlFiles, f)
+		}
+	}
+
+	if len(entryPointFiles) != 0 {
+		t.res = make(resource.Resources, 0, len(entryPointFiles))
+
+		for _, f := range entryPointFiles {
 			var mediaType media.Type
 			switch filepath.Ext(f.Path) {
 			case ".js":
@@ -269,7 +298,7 @@ func (t *buildTransformation) Transform(ctx *resources.ResourceTransformationCtx
 				mediaType = media.Builtin.CSSType
 			}
 
-			key := dynacache.CleanKey(path) + hashing.MD5FromStringHexEncoded(string(f.Contents))
+			key := dynacache.CleanKey(f.Path) + hashing.MD5FromStringHexEncoded(string(f.Contents))
 			r, err := t.c.rs.ResourceCache.GetOrCreate(key, func() (resource.Resource, error) {
 				return t.c.rs.NewResource(
 					resources.ResourceSourceDescriptor{
@@ -279,22 +308,23 @@ func (t *buildTransformation) Transform(ctx *resources.ResourceTransformationCtx
 						OpenReadSeekCloser: func() (hugio.ReadSeekCloser, error) {
 							return hugio.NewReadSeekerNoOpCloserFromBytes(f.Contents), nil
 						},
-						TargetPath: path,
+						TargetPath: f.Path,
 					})
 			})
 			if err != nil {
 				return err
 			}
-			rsc = append(rsc, r)
-			continue
+			t.res = append(t.res, r)
 		}
 
-		if err = ctx.Publish(path, string(f.Contents)); err != nil {
-			return err
+		for _, f := range addlFiles {
+			if err = ctx.Publish(f.Path, string(f.Contents)); err != nil {
+				return err
+			}
 		}
+
+		fmt.Println(t.res)
 	}
-
-	fmt.Println(rsc)
 
 	if buildOptions.Sourcemap == api.SourceMapExternal {
 		// add it to the output file to keep "external" working as originally intended
@@ -344,9 +374,16 @@ func (t *buildTransformation) Transform(ctx *resources.ResourceTransformationCtx
 
 // Process process esbuild transform
 func (c *Client) Process(res resources.ResourceTransformer, opts map[string]any) (any, error) {
-	return res.Transform(
-		&buildTransformation{c: c, optsm: opts},
-	)
+	t := &buildTransformation{c: c, optsm: opts}
+	r, err := res.Transform(t)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(t.res) == 0 {
+		return r, nil
+	}
+	return t.res, nil
 }
 
 // lowestCommonAncestorDirectory returns the lowest common directory of the given entry points.
