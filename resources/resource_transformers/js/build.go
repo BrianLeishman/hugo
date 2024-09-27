@@ -380,6 +380,10 @@ func (c *Client) Process(res resources.ResourceTransformer, opts map[string]any)
 		return nil, err
 	}
 
+	r.RelPermalink()
+
+	fmt.Println("resources count:", len(t.res))
+
 	if len(t.res) == 0 {
 		return r, nil
 	}
