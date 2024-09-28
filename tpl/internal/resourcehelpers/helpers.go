@@ -21,6 +21,7 @@ import (
 
 	"github.com/gohugoio/hugo/common/maps"
 	"github.com/gohugoio/hugo/resources"
+	"github.com/gohugoio/hugo/resources/resource"
 )
 
 // We allow string or a map as the first argument in some cases.
@@ -58,6 +59,49 @@ func ResolveArgs(args []any) (resources.ResourceTransformer, map[string]any, err
 			return nil, nil, fmt.Errorf("no Resource provided in transformation")
 		}
 		return nil, nil, fmt.Errorf("type %T not supported in Resource transformations", args[0])
+	}
+
+	m, err := maps.ToStringMapE(args[0])
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid options type: %w", err)
+	}
+
+	return r, m, nil
+}
+
+func ResolveResourcesIfFirstArgIsString(args []any) (resource.Resources, string, bool) {
+	if len(args) != 2 {
+		return nil, "", false
+	}
+
+	v1, ok1 := args[0].(string)
+	if !ok1 {
+		return nil, "", false
+	}
+	v2, ok2 := args[1].(resource.Resources)
+
+	return v2, v1, ok2
+}
+
+func ResolveResourcesArgs(args []any) (resource.Resources, map[string]any, error) {
+	if len(args) == 0 {
+		return nil, nil, errors.New("no Resources provided in transformation")
+	}
+
+	if len(args) == 1 {
+		r, ok := args[0].(resource.Resources)
+		if !ok {
+			return nil, nil, fmt.Errorf("type %T not supported in Resources transformations", args[0])
+		}
+		return r, nil, nil
+	}
+
+	r, ok := args[1].(resource.Resources)
+	if !ok {
+		if _, ok := args[1].(map[string]any); !ok {
+			return nil, nil, fmt.Errorf("no Resources provided in transformation")
+		}
+		return nil, nil, fmt.Errorf("type %T not supported in Resources transformations", args[0])
 	}
 
 	m, err := maps.ToStringMapE(args[0])

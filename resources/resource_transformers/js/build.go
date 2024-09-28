@@ -310,11 +310,44 @@ func (t *buildTransformation) Transform(ctx *resources.ResourceTransformationCtx
 	return nil
 }
 
-// Process process esbuild transform
-func (c *Client) Process(res resources.ResourceTransformer, opts map[string]any) (resource.Resource, error) {
-	return res.Transform(
-		&buildTransformation{c: c, optsm: opts},
+func transform(t *buildTransformation, r resource.Resources) (resource.Resources, error) {
+	var (
+		resources resource.Resources
+		err       error
 	)
+
+	for _, res := range r {
+		var ctx resources.ResourceTransformationCtx
+		ctx.From = res
+		ctx.SourcePath = res.ResourceMeta().Filename()
+
+		ctx.To, err = t.c.rs.GetOutgoingBySpec(ctx.SourcePath, t.Key())
+		if err != nil {
+			return nil, err
+		}
+
+		if err = t.Transform(&ctx); err != nil {
+			return nil, err
+		}
+
+		resources = append(resources, ctx.To)
+	}
+
+	return resources, nil
+}
+
+// Process process esbuild transform
+func (c *Client) Process(res any, opts map[string]any) (any, error) {
+	t := &buildTransformation{c: c, optsm: opts}
+
+	switch r := res.(type) {
+	case resources.ResourceTransformer:
+		return r.Transform(t)
+	case resource.Resources:
+		return transform(t, r)
+	default:
+		return nil, fmt.Errorf("type %T not supported in Resource transformations", res)
+	}
 }
 
 // lowestCommonAncestorDirectory returns the lowest common directory of the given entry points.
