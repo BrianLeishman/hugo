@@ -23,7 +23,6 @@ import (
 	"github.com/gohugoio/hugo/common/maps"
 	"github.com/gohugoio/hugo/common/paths"
 	"github.com/gohugoio/hugo/identity"
-	"github.com/gohugoio/hugo/resources/resource"
 	"github.com/spf13/afero"
 
 	"github.com/evanw/esbuild/pkg/api"
@@ -114,12 +113,6 @@ type Options struct {
 	// TODO(bep) remove. See https://github.com/evanw/esbuild/commit/869e8117b499ca1dbfc5b3021938a53ffe934dba
 	AvoidTDZ bool
 
-	// This is a slice of files that each serve as an input to the bundling algorithm.
-	// The filenames must be relative to /assets.
-	//
-	// See https://esbuild.github.io/api/#entry-points
-	EntryPoints []any
-
 	// Code shared between multiple entry points is split off into a separate shared file that both entry points import.
 	// See https://esbuild.github.io/api/#splitting
 	Splitting bool
@@ -144,16 +137,6 @@ func decodeOptions(m map[string]any) (Options, error) {
 
 	opts.Target = strings.ToLower(opts.Target)
 	opts.Format = strings.ToLower(opts.Format)
-
-	for i, ext := range opts.EntryPoints {
-		switch v := ext.(type) {
-		case string:
-		case resource.Resource:
-			opts.EntryPoints[i] = strings.TrimPrefix(v.Name(), "/")
-		default:
-			return opts, fmt.Errorf("invalid entry point type: %T", ext)
-		}
-	}
 
 	return opts, nil
 }
@@ -482,11 +465,6 @@ func toBuildOptions(opts Options) (buildOptions api.BuildOptions, err error) {
 		}
 	}
 
-	entryPoints := make([]string, len(opts.EntryPoints))
-	for i, e := range opts.EntryPoints {
-		entryPoints[i] = e.(string)
-	}
-
 	buildOptions = api.BuildOptions{
 		Bundle: true,
 
@@ -513,8 +491,7 @@ func toBuildOptions(opts Options) (buildOptions api.BuildOptions, err error) {
 
 		Loader: loaders,
 
-		EntryPoints: entryPoints,
-		Splitting:   opts.Splitting,
+		Splitting: opts.Splitting,
 	}
 	return
 }

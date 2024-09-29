@@ -17,7 +17,6 @@ package js
 import (
 	"errors"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/gohugoio/hugo/deps"
 	"github.com/gohugoio/hugo/resources/resource"
 	"github.com/gohugoio/hugo/resources/resource_transformers/babel"
@@ -76,8 +75,6 @@ func (ns *Namespace) Build(args ...any) (any, error) {
 	if targetPath != "" {
 		m = map[string]any{"targetPath": targetPath}
 	}
-
-	spew.Dump(r)
 
 	return ns.client.Process(r, m)
 }

@@ -27,6 +27,7 @@ import (
 
 	"github.com/spf13/afero"
 
+	"github.com/gohugoio/hugo/helpers"
 	"github.com/gohugoio/hugo/hugofs"
 	"github.com/gohugoio/hugo/media"
 
@@ -38,7 +39,6 @@ import (
 
 	"github.com/evanw/esbuild/pkg/api"
 	"github.com/gohugoio/hugo/resources"
-	"github.com/gohugoio/hugo/resources/resource"
 )
 
 // Client context for ESBuild.
@@ -310,30 +310,223 @@ func (t *buildTransformation) Transform(ctx *resources.ResourceTransformationCtx
 	return nil
 }
 
-func transform(t *buildTransformation, r resource.Resources) (resource.Resources, error) {
-	var (
-		resources resource.Resources
-		err       error
-	)
-
-	for _, res := range r {
-		var ctx resources.ResourceTransformationCtx
-		ctx.From = res
-		ctx.SourcePath = res.ResourceMeta().Filename()
-
-		ctx.To, err = t.c.rs.GetOutgoingBySpec(ctx.SourcePath, t.Key())
-		if err != nil {
-			return nil, err
-		}
-
-		if err = t.Transform(&ctx); err != nil {
-			return nil, err
-		}
-
-		resources = append(resources, ctx.To)
+func transform(t *buildTransformation, r []resources.ResourceTransformer) ([]resources.ResourceTransformer, error) {
+	opts, err := decodeOptions(t.optsm)
+	if err != nil {
+		return nil, err
 	}
 
-	return resources, nil
+	opts.resolveDir = t.c.rs.Cfg.BaseConfig().WorkingDir // where node_modules gets resolved
+	opts.tsConfig = t.c.rs.ResolveJSConfigFile("tsconfig.json")
+
+	buildOptions, err := toBuildOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	buildOptions.Outdir, err = os.MkdirTemp(os.TempDir(), "compileOutput")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(buildOptions.Outdir)
+
+	buildOptions.EntryPoints = make([]string, 0, len(r))
+	for _, ext := range r {
+		impPath := filepath.FromSlash(ext.Name())
+		m := resolveComponentInAssets(t.c.rs.Assets.Fs, impPath)
+		if m == nil {
+			return nil, fmt.Errorf("file %q not found", ext.Name())
+		}
+
+		buildOptions.EntryPoints = append(buildOptions.EntryPoints, m.Filename)
+	}
+
+	result := api.Build(buildOptions)
+
+	if len(result.Errors) > 0 {
+
+		createErr := func(msg api.Message) error {
+			loc := msg.Location
+			if loc == nil {
+				return errors.New(msg.Text)
+			}
+			path := loc.File
+
+			errorMessage := msg.Text
+			errorMessage = strings.ReplaceAll(errorMessage, nsImportHugo+":", "")
+
+			var (
+				f   afero.File
+				err error
+			)
+
+			if strings.HasPrefix(path, nsImportHugo) {
+				path = strings.TrimPrefix(path, nsImportHugo+":")
+				f, err = hugofs.Os.Open(path)
+			} else {
+				var fi os.FileInfo
+				fi, err = t.c.sfs.Fs.Stat(path)
+				if err == nil {
+					m := fi.(hugofs.FileMetaInfo).Meta()
+					path = m.Filename
+					f, err = m.Open()
+				}
+
+			}
+
+			if err == nil {
+				fe := herrors.
+					NewFileErrorFromName(errors.New(errorMessage), path).
+					UpdatePosition(text.Position{Offset: -1, LineNumber: loc.Line, ColumnNumber: loc.Column}).
+					UpdateContent(f, nil)
+
+				f.Close()
+				return fe
+			}
+
+			return fmt.Errorf("%s", errorMessage)
+		}
+
+		var errors []error
+
+		for _, msg := range result.Errors {
+			errors = append(errors, createErr(msg))
+		}
+
+		// Return 1, log the rest.
+		for i, err := range errors {
+			if i > 0 {
+				t.c.rs.Logger.Errorf("js.Build failed: %s", err)
+			}
+		}
+
+		return nil, errors[0]
+	}
+
+	entryPointsMap := make(map[string]resources.ResourceTransformer, len(buildOptions.EntryPoints)*2)
+	outBase := lowestCommonAncestorDirectory(buildOptions.EntryPoints)
+
+	// we need to know the full paths of the entry points in the output
+	for _, ext := range r {
+		impPath := filepath.FromSlash(ext.Name())
+		m := resolveComponentInAssets(t.c.rs.Assets.Fs, impPath)
+		if m == nil {
+			return nil, fmt.Errorf("file %q not found", ext.Name())
+		}
+
+		// remove starting common path
+		name := strings.TrimPrefix(m.Filename, outBase)
+
+		// remove extensio
+		name = strings.TrimSuffix(name, filepath.Ext(name))
+
+		// add tmp dir prefix
+		name = filepath.Join(buildOptions.Outdir, name)
+		nameJS := name + ".js"
+
+		// add entry point to map
+		entryPointsMap[nameJS] = ext
+		entryPointsMap[name+".css"] = ext
+	}
+
+	type entryPoint struct {
+		r resources.ResourceTransformer
+		f api.OutputFile
+	}
+
+	var (
+		// entryPointFiles are the files that we expect to be referencing,
+		// such as the literal js/ts file we gave it, or the matching css file.
+		entryPointFiles []entryPoint
+
+		// addlFiles is the source maps and chunks that are created, things that we aren't
+		// expecting to manually publish, but that just need to be there for importing or debugging.
+		addlFiles []api.OutputFile
+	)
+
+	outDir := opts.TargetPath
+
+	for _, f := range result.OutputFiles {
+		realPath := f.Path
+
+		path := strings.TrimPrefix(f.Path, buildOptions.Outdir)
+		path = filepath.Join(outDir, path)
+		f.Path = path
+
+		if r, ok := entryPointsMap[realPath]; ok {
+			entryPointFiles = append(entryPointFiles, entryPoint{r: r, f: f})
+		} else {
+			addlFiles = append(addlFiles, f)
+		}
+	}
+
+	if len(entryPointFiles) == 0 {
+		return nil, nil
+	}
+
+	res := make([]resources.ResourceTransformer, 0, len(entryPointFiles))
+
+	for _, f := range entryPointFiles {
+		var mediaType media.Type
+		switch filepath.Ext(f.f.Path) {
+		case ".js":
+			mediaType = media.Builtin.JavascriptType
+		case ".css":
+			mediaType = media.Builtin.CSSType
+		}
+
+		t, err := f.r.Transform(&outTransformation{
+			optsm: map[string]any{
+				"contents":   string(f.f.Contents),
+				"mediaType":  mediaType,
+				"targetPath": f.f.Path,
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to transform resource: %w", err)
+		}
+
+		res = append(res, t)
+	}
+
+	for _, f := range addlFiles {
+		if err = publish(t, f.Path, string(f.Contents)); err != nil {
+			return nil, err
+		}
+	}
+
+	return res, nil
+}
+
+type outTransformation struct {
+	optsm map[string]any
+}
+
+func (t *outTransformation) Key() internal.ResourceTransformationKey {
+	return internal.NewResourceTransformationKey("jsbuild", t.optsm)
+}
+
+func (t *outTransformation) Transform(ctx *resources.ResourceTransformationCtx) error {
+	_, err := ctx.To.Write([]byte(t.optsm["contents"].(string)))
+	if err != nil {
+		return err
+	}
+
+	ctx.OutMediaType = t.optsm["mediaType"].(media.Type)
+	ctx.OutPath = t.optsm["targetPath"].(string)
+
+	return nil
+}
+
+func publish(t *buildTransformation, target, content string) error {
+	f, err := helpers.OpenFilesForWriting(t.c.rs.BaseFs.PublishFs, target)
+	if err != nil {
+		return fmt.Errorf("failed to open file for publishing %q: %w", target, err)
+	}
+
+	defer f.Close()
+	_, err = f.Write([]byte(content))
+	return err
 }
 
 // Process process esbuild transform
@@ -343,7 +536,7 @@ func (c *Client) Process(res any, opts map[string]any) (any, error) {
 	switch r := res.(type) {
 	case resources.ResourceTransformer:
 		return r.Transform(t)
-	case resource.Resources:
+	case []resources.ResourceTransformer:
 		return transform(t, r)
 	default:
 		return nil, fmt.Errorf("type %T not supported in Resource transformations", res)
