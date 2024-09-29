@@ -18,7 +18,6 @@ import (
 	"errors"
 
 	"github.com/gohugoio/hugo/deps"
-	"github.com/gohugoio/hugo/resources"
 	"github.com/gohugoio/hugo/resources/resource"
 	"github.com/gohugoio/hugo/resources/resource_transformers/babel"
 	"github.com/gohugoio/hugo/resources/resource_transformers/js"
@@ -43,21 +42,36 @@ type Namespace struct {
 }
 
 // Build processes the given Resource with ESBuild.
-func (ns *Namespace) Build(args ...any) (resource.Resource, error) {
+func (ns *Namespace) Build(args ...any) (any, error) {
 	var (
-		r          resources.ResourceTransformer
+		r          any
 		m          map[string]any
 		targetPath string
 		err        error
 		ok         bool
 	)
 
-	r, targetPath, ok = resourcehelpers.ResolveIfFirstArgIsString(args)
+	r, targetPath, ok = resourcehelpers.ResolveResourcesIfFirstArgIsString(args)
 
 	if !ok {
-		r, m, err = resourcehelpers.ResolveArgs(args)
+		r, m, err = resourcehelpers.ResolveResourcesArgs(args)
 		if err != nil {
-			return nil, err
+			r = nil
+		}
+	}
+
+	if r == nil {
+		if targetPath != "" {
+			m = map[string]any{"targetPath": targetPath}
+		}
+
+		r, targetPath, ok = resourcehelpers.ResolveIfFirstArgIsString(args)
+
+		if !ok {
+			r, m, err = resourcehelpers.ResolveArgs(args)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 

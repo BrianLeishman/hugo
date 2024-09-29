@@ -202,6 +202,25 @@ type Transformer interface {
 	TransformWithContext(context.Context, ...ResourceTransformation) (ResourceTransformer, error)
 }
 
+type ResourceCollection struct {
+	Resources resource.Resources
+	m         map[string]resource.Resource
+}
+
+func (c *ResourceCollection) init() {
+	if c.m == nil {
+		c.m = make(map[string]resource.Resource)
+		for _, r := range c.Resources {
+			c.m[r.RelPermalink()] = r
+		}
+	}
+}
+
+func (c *ResourceCollection) Get(key string) resource.Resource {
+	c.init()
+	return c.m[key]
+}
+
 func NewFeatureNotAvailableTransformer(key string, elements ...any) ResourceTransformation {
 	return transformerNotAvailable{
 		key: internal.NewResourceTransformationKey(key, elements...),

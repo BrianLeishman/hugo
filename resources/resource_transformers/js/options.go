@@ -14,16 +14,12 @@
 package js
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/gohugoio/hugo/common/maps"
 	"github.com/gohugoio/hugo/common/paths"
-	"github.com/gohugoio/hugo/identity"
-	"github.com/gohugoio/hugo/resources/resource"
 	"github.com/spf13/afero"
 
 	"github.com/evanw/esbuild/pkg/api"
@@ -35,8 +31,6 @@ import (
 const (
 	nsImportHugo = "ns-hugo"
 	nsParams     = "ns-params"
-
-	stdinImporter = "<stdin>"
 )
 
 // Options esbuild configuration
@@ -114,19 +108,11 @@ type Options struct {
 	// TODO(bep) remove. See https://github.com/evanw/esbuild/commit/869e8117b499ca1dbfc5b3021938a53ffe934dba
 	AvoidTDZ bool
 
-	// This is a slice of files that each serve as an input to the bundling algorithm.
-	// The filenames must be relative to /assets.
-	//
-	// See https://esbuild.github.io/api/#entry-points
-	EntryPoints []any
-
 	// Code shared between multiple entry points is split off into a separate shared file that both entry points import.
 	// See https://esbuild.github.io/api/#splitting
 	Splitting bool
 
 	outDir     string
-	contents   string
-	sourceDir  string
 	resolveDir string
 	tsConfig   string
 }
@@ -145,37 +131,7 @@ func decodeOptions(m map[string]any) (Options, error) {
 	opts.Target = strings.ToLower(opts.Target)
 	opts.Format = strings.ToLower(opts.Format)
 
-	for i, ext := range opts.EntryPoints {
-		switch v := ext.(type) {
-		case string:
-		case resource.Resource:
-			opts.EntryPoints[i] = strings.TrimPrefix(v.Name(), "/")
-		default:
-			return opts, fmt.Errorf("invalid entry point type: %T", ext)
-		}
-	}
-
 	return opts, nil
-}
-
-var extensionToLoaderMap = map[string]api.Loader{
-	".js":   api.LoaderJS,
-	".mjs":  api.LoaderJS,
-	".cjs":  api.LoaderJS,
-	".jsx":  api.LoaderJSX,
-	".ts":   api.LoaderTS,
-	".tsx":  api.LoaderTSX,
-	".css":  api.LoaderCSS,
-	".json": api.LoaderJSON,
-	".txt":  api.LoaderText,
-}
-
-func loaderFromFilename(filename string) api.Loader {
-	l, found := extensionToLoaderMap[filepath.Ext(filename)]
-	if found {
-		return l
-	}
-	return api.LoaderJS
 }
 
 func resolveComponentInAssets(fs afero.Fs, impPath string) *hugofs.FileMeta {
@@ -237,117 +193,6 @@ func resolveComponentInAssets(fs afero.Fs, impPath string) *hugofs.FileMeta {
 	}
 
 	return m
-}
-
-func createBuildPlugins(depsManager identity.Manager, c *Client, opts Options) ([]api.Plugin, error) {
-	fs := c.rs.Assets
-
-	resolveImport := func(args api.OnResolveArgs) (api.OnResolveResult, error) {
-		impPath := args.Path
-		if opts.Shims != nil {
-			override, found := opts.Shims[impPath]
-			if found {
-				impPath = override
-			}
-		}
-		isStdin := args.Importer == stdinImporter
-		var relDir string
-		if !isStdin {
-			rel, found := fs.MakePathRelative(args.Importer, true)
-			if !found {
-				// Not in any of the /assets folders.
-				// This is an import from a node_modules, let
-				// ESBuild resolve this.
-				return api.OnResolveResult{}, nil
-			}
-
-			relDir = filepath.Dir(rel)
-		} else {
-			relDir = opts.sourceDir
-		}
-
-		// Imports not starting with a "." is assumed to live relative to /assets.
-		// Hugo makes no assumptions about the directory structure below /assets.
-		if relDir != "" && strings.HasPrefix(impPath, ".") {
-			impPath = filepath.Join(relDir, impPath)
-		}
-
-		m := resolveComponentInAssets(fs.Fs, impPath)
-
-		if m != nil {
-			depsManager.AddIdentity(m.PathInfo)
-
-			// Store the source root so we can create a jsconfig.json
-			// to help IntelliSense when the build is done.
-			// This should be a small number of elements, and when
-			// in server mode, we may get stale entries on renames etc.,
-			// but that shouldn't matter too much.
-			c.rs.JSConfigBuilder.AddSourceRoot(m.SourceRoot)
-			return api.OnResolveResult{Path: m.Filename, Namespace: nsImportHugo}, nil
-		}
-
-		// Fall back to ESBuild's resolve.
-		return api.OnResolveResult{}, nil
-	}
-
-	importResolver := api.Plugin{
-		Name: "hugo-import-resolver",
-		Setup: func(build api.PluginBuild) {
-			build.OnResolve(api.OnResolveOptions{Filter: `.*`},
-				func(args api.OnResolveArgs) (api.OnResolveResult, error) {
-					return resolveImport(args)
-				})
-			build.OnLoad(api.OnLoadOptions{Filter: `.*`, Namespace: nsImportHugo},
-				func(args api.OnLoadArgs) (api.OnLoadResult, error) {
-					b, err := os.ReadFile(args.Path)
-					if err != nil {
-						return api.OnLoadResult{}, fmt.Errorf("failed to read %q: %w", args.Path, err)
-					}
-					c := string(b)
-					return api.OnLoadResult{
-						// See https://github.com/evanw/esbuild/issues/502
-						// This allows all modules to resolve dependencies
-						// in the main project's node_modules.
-						ResolveDir: opts.resolveDir,
-						Contents:   &c,
-						Loader:     loaderFromFilename(args.Path),
-					}, nil
-				})
-		},
-	}
-
-	params := opts.Params
-	if params == nil {
-		// This way @params will always resolve to something.
-		params = make(map[string]any)
-	}
-
-	b, err := json.Marshal(params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal params: %w", err)
-	}
-	bs := string(b)
-	paramsPlugin := api.Plugin{
-		Name: "hugo-params-plugin",
-		Setup: func(build api.PluginBuild) {
-			build.OnResolve(api.OnResolveOptions{Filter: `^@params$`},
-				func(args api.OnResolveArgs) (api.OnResolveResult, error) {
-					return api.OnResolveResult{
-						Path:      args.Path,
-						Namespace: nsParams,
-					}, nil
-				})
-			build.OnLoad(api.OnLoadOptions{Filter: `.*`, Namespace: nsParams},
-				func(args api.OnLoadArgs) (api.OnLoadResult, error) {
-					return api.OnLoadResult{
-						Contents: &bs,
-						Loader:   api.LoaderJSON,
-					}, nil
-				})
-		},
-	}
-
-	return []api.Plugin{importResolver, paramsPlugin}, nil
 }
 
 func toBuildOptions(opts Options) (buildOptions api.BuildOptions, err error) {
@@ -482,11 +327,6 @@ func toBuildOptions(opts Options) (buildOptions api.BuildOptions, err error) {
 		}
 	}
 
-	entryPoints := make([]string, len(opts.EntryPoints))
-	for i, e := range opts.EntryPoints {
-		entryPoints[i] = e.(string)
-	}
-
 	buildOptions = api.BuildOptions{
 		Bundle: true,
 
@@ -513,8 +353,7 @@ func toBuildOptions(opts Options) (buildOptions api.BuildOptions, err error) {
 
 		Loader: loaders,
 
-		EntryPoints: entryPoints,
-		Splitting:   opts.Splitting,
+		Splitting: opts.Splitting,
 	}
 	return
 }
