@@ -267,8 +267,14 @@ func (c *Client) Transform(optsm map[string]any, r []resources.ResourceTransform
 		res = append(res, t)
 	}
 
+	var addlFilesBase string
+	if single && opts.TargetPath == "" {
+		addlFilesBase = strings.TrimPrefix(filepath.Dir(r[0].Name()), "/")
+	}
+
 	for _, f := range addlFiles {
-		if err = c.Publish(f.Path, string(f.Contents)); err != nil {
+		path := filepath.Join(addlFilesBase, f.Path)
+		if err = c.Publish(path, string(f.Contents)); err != nil {
 			return nil, err
 		}
 	}
