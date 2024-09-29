@@ -54,7 +54,10 @@ func (ns *Namespace) Build(args ...any) (any, error) {
 	r, targetPath, ok = resourcehelpers.ResolveResourcesIfFirstArgIsString(args)
 
 	if !ok {
-		r, m, _ = resourcehelpers.ResolveResourcesArgs(args)
+		r, m, err = resourcehelpers.ResolveResourcesArgs(args)
+		if err != nil {
+			r = nil
+		}
 	}
 
 	if r == nil {
