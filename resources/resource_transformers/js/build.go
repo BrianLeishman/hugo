@@ -324,31 +324,37 @@ func (c *Client) Publish(target, content string) error {
 }
 
 // Process process esbuild transform
-func (c *Client) Process(res any, opts map[string]any) (any, error) {
-	key := internal.NewResourceTransformationKey("jsbuild", opts)
+func (c *Client) Process(maybeRes any, opts map[string]any) (any, error) {
+	var single bool
+	var res []resources.ResourceTransformer
+	switch r := maybeRes.(type) {
+	case resources.ResourceTransformer:
+		res = []resources.ResourceTransformer{r}
+		single = true
+	case []resources.ResourceTransformer:
+		res = r
+	default:
+		return nil, fmt.Errorf("type %T not supported in Resource transformations", maybeRes)
+	}
+
+	names := make([]string, 0, len(res))
+	for _, r := range res {
+		names = append(names, r.Name())
+	}
+
+	key := internal.NewResourceTransformationKey("jsbuild", names, opts)
 
 	r, err := c.rs.ResourceCache.GetOrCreateResources(key.Value(), func() (resource.Resources, error) {
-		switch r := res.(type) {
-		case resources.ResourceTransformer:
-			return c.Transform(opts, []resources.ResourceTransformer{r}, true)
-		case []resources.ResourceTransformer:
-			return c.Transform(opts, r, false)
-		default:
-			return nil, fmt.Errorf("type %T not supported in Resource transformations", res)
-		}
+		return c.Transform(opts, res, single)
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	switch res.(type) {
-	case resources.ResourceTransformer:
+	if single {
 		return r[0], nil
-	case []resources.ResourceTransformer:
-		return &resources.ResourceCollection{Resources: r}, nil
-	default:
-		return nil, fmt.Errorf("type %T not supported in Resource transformations", res)
 	}
+	return &resources.ResourceCollection{Resources: r}, nil
 }
 
 // lowestCommonAncestorDirectory returns the lowest common directory of the given entry points.
