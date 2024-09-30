@@ -354,7 +354,8 @@ func (c *Client) Process(maybeRes any, opts map[string]any) (any, error) {
 	if single {
 		return r[0], nil
 	}
-	return &resources.ResourceCollection{Resources: r}, nil
+
+	return &resources.ResourceCollection{Resources: r, BasePath: c.rs.PathSpec.GetBasePath(false)}, nil
 }
 
 // lowestCommonAncestorDirectory returns the lowest common directory of the given entry points.

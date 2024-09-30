@@ -204,6 +204,7 @@ type Transformer interface {
 
 type ResourceCollection struct {
 	Resources resource.Resources
+	BasePath  string
 	m         map[string]resource.Resource
 }
 
@@ -211,7 +212,7 @@ func (c *ResourceCollection) init() {
 	if c.m == nil {
 		c.m = make(map[string]resource.Resource)
 		for _, r := range c.Resources {
-			c.m[r.RelPermalink()] = r
+			c.m[strings.TrimPrefix(r.RelPermalink(), c.BasePath)] = r
 		}
 	}
 }
