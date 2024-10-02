@@ -30,6 +30,7 @@ import (
 	"github.com/gohugoio/hugo/media"
 
 	"github.com/gohugoio/hugo/common/herrors"
+	"github.com/gohugoio/hugo/common/paths"
 	"github.com/gohugoio/hugo/common/text"
 
 	"github.com/gohugoio/hugo/hugolib/filesystems"
@@ -108,6 +109,12 @@ func (c *Client) Transform(optsm map[string]any, r []resources.ResourceTransform
 		}
 
 		buildOptions.EntryPoints = append(buildOptions.EntryPoints, m.Filename)
+	}
+
+	depPaths := new([]*paths.Path)
+	buildOptions.Plugins, err = createBuildPlugins(depPaths, c, opts)
+	if err != nil {
+		return nil, err
 	}
 
 	result := api.Build(buildOptions)
@@ -254,6 +261,7 @@ func (c *Client) Transform(optsm map[string]any, r []resources.ResourceTransform
 		}
 
 		t, err := f.r.Transform(&entrypointTransformation{
+			depPaths: *depPaths,
 			optsm: map[string]any{
 				"contents":   string(f.f.Contents),
 				"mediaType":  mediaType,
@@ -283,7 +291,8 @@ func (c *Client) Transform(optsm map[string]any, r []resources.ResourceTransform
 }
 
 type entrypointTransformation struct {
-	optsm map[string]any
+	depPaths []*paths.Path
+	optsm    map[string]any
 }
 
 func (t *entrypointTransformation) Key() internal.ResourceTransformationKey {
@@ -308,6 +317,9 @@ func (t *entrypointTransformation) Transform(ctx *resources.ResourceTransformati
 
 	ctx.OutMediaType = opts.MediaType
 	ctx.OutPath = opts.TargetPath
+	for _, p := range t.depPaths {
+		ctx.DependencyManager.AddIdentity(p)
+	}
 
 	return nil
 }
