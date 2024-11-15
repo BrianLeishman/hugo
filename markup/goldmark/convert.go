@@ -43,6 +43,7 @@ import (
 )
 
 const (
+	// Don't change this. This pattern is lso used in the image render hooks.
 	internalAttrPrefix = "_h__"
 )
 
@@ -106,7 +107,7 @@ func newMarkdown(pcfg converter.ProviderConfig) goldmark.Markdown {
 		renderer.WithNodeRenderers(util.Prioritized(emoji.NewHTMLRenderer(), 200)))
 	var (
 		extensions = []goldmark.Extender{
-			hugocontext.New(),
+			hugocontext.New(pcfg.Logger),
 			newLinks(cfg),
 			newTocExtension(tocRendererOptions),
 			blockquotes.New(),

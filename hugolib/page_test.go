@@ -1688,6 +1688,32 @@ title: Scratch Me!
 	b.AssertFileContent("public/scratchme/index.html", "C: cv")
 }
 
+// Issue 13016.
+func TestScratchAliasToStore(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+disableKinds = ["taxonomy", "term", "page", "section"]
+disableLiveReload = true
+-- layouts/index.html --
+{{ .Scratch.Set "a" "b" }}
+{{ .Store.Set "c" "d" }}
+.Scratch eq .Store: {{ eq .Scratch .Store }}
+a: {{ .Store.Get "a" }}
+c: {{ .Scratch.Get "c" }}
+
+`
+
+	b := Test(t, files)
+
+	b.AssertFileContent("public/index.html",
+		".Scratch eq .Store: true",
+		"a: b",
+		"c: d",
+	)
+}
+
 func TestPageParam(t *testing.T) {
 	t.Parallel()
 
@@ -1866,4 +1892,53 @@ func TestRenderWithoutArgument(t *testing.T) {
 	).BuildE()
 
 	b.Assert(err, qt.IsNotNil)
+}
+
+// Issue #13021
+func TestAllStores(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+disableKinds = ["taxonomy", "term", "page", "section"]
+disableLiveReload = true
+-- content/_index.md --
+---
+title: "Home"
+---
+{{< s >}}
+-- layouts/shortcodes/s.html --
+{{ if not (.Store.Get "Shortcode") }}{{ .Store.Set "Shortcode" (printf "sh-%s" $.Page.Title) }}{{ end }}
+Shortcode: {{ .Store.Get "Shortcode" }}|
+-- layouts/index.html --
+{{ .Content }}
+{{ if not (.Store.Get "Page") }}{{ .Store.Set "Page" (printf "p-%s" $.Title) }}{{ end }}
+{{ if not (hugo.Store.Get "Hugo") }}{{ hugo.Store.Set "Hugo" (printf "h-%s" $.Title) }}{{ end }}
+{{ if not (site.Store.Get "Site") }}{{ site.Store.Set "Site" (printf "s-%s" $.Title) }}{{ end }}
+Page: {{ .Store.Get "Page" }}|
+Hugo: {{ hugo.Store.Get "Hugo" }}|
+Site: {{ site.Store.Get "Site" }}|
+`
+
+	b := TestRunning(t, files)
+
+	b.AssertFileContent("public/index.html",
+		`
+Shortcode: sh-Home|
+Page: p-Home|
+Site: s-Home|
+Hugo: h-Home|
+`,
+	)
+
+	b.EditFileReplaceAll("content/_index.md", "Home", "Homer").Build()
+
+	b.AssertFileContent("public/index.html",
+		`
+Shortcode: sh-Homer|
+Page: p-Homer|
+Site: s-Home|
+Hugo: h-Home|
+`,
+	)
 }

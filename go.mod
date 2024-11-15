@@ -11,7 +11,7 @@ require (
 	github.com/bep/gitmap v1.6.0
 	github.com/bep/goat v0.5.0
 	github.com/bep/godartsass v1.2.0
-	github.com/bep/godartsass/v2 v2.1.0
+	github.com/bep/godartsass/v2 v2.2.0
 	github.com/bep/golibsass v1.2.0
 	github.com/bep/gowebp v0.3.0
 	github.com/bep/helpers v0.5.0
@@ -28,7 +28,7 @@ require (
 	github.com/disintegration/gift v1.2.1
 	github.com/dustin/go-humanize v1.0.1
 	github.com/evanw/esbuild v0.24.0
-	github.com/fatih/color v1.17.0
+	github.com/fatih/color v1.18.0
 	github.com/fortytw2/leaktest v1.3.0
 	github.com/frankban/quicktest v1.14.6
 	github.com/fsnotify/fsnotify v1.7.0
@@ -46,7 +46,7 @@ require (
 	github.com/gohugoio/testmodBuilder/mods v0.0.0-20190520184928-c56af20f2e95
 	github.com/google/go-cmp v0.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/hairyhenderson/go-codeowners v0.6.0
+	github.com/hairyhenderson/go-codeowners v0.6.1
 	github.com/jdkato/prose v1.2.1
 	github.com/kylelemons/godebug v1.1.0
 	github.com/kyokomi/emoji/v2 v2.2.13
@@ -60,6 +60,7 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
 	github.com/pelletier/go-toml/v2 v2.2.3
+	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/rogpeppe/go-internal v1.13.1
 	github.com/sanity-io/litter v1.5.5
 	github.com/spf13/afero v1.11.0
@@ -67,20 +68,20 @@ require (
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/fsync v0.10.1
 	github.com/spf13/pflag v1.0.5
-	github.com/tdewolff/minify/v2 v2.20.37
-	github.com/tdewolff/parse/v2 v2.7.15
+	github.com/tdewolff/minify/v2 v2.21.1
+	github.com/tdewolff/parse/v2 v2.7.18
 	github.com/tetratelabs/wazero v1.8.1
-	github.com/yuin/goldmark v1.7.4
+	github.com/yuin/goldmark v1.7.8
 	github.com/yuin/goldmark-emoji v1.0.4
 	go.uber.org/automaxprocs v1.5.3
 	gocloud.dev v0.39.0
 	golang.org/x/exp v0.0.0-20221031165847-c99f073a8326
-	golang.org/x/image v0.21.0
-	golang.org/x/mod v0.21.0
-	golang.org/x/net v0.30.0
-	golang.org/x/sync v0.8.0
-	golang.org/x/text v0.19.0
-	golang.org/x/tools v0.26.0
+	golang.org/x/image v0.22.0
+	golang.org/x/mod v0.22.0
+	golang.org/x/net v0.31.0
+	golang.org/x/sync v0.9.0
+	golang.org/x/text v0.20.0
+	golang.org/x/tools v0.27.0
 	google.golang.org/api v0.191.0
 	gopkg.in/yaml.v2 v2.4.0
 )
@@ -145,7 +146,6 @@ require (
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
-	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	go.opencensus.io v0.24.0 // indirect
@@ -154,9 +154,9 @@ require (
 	go.opentelemetry.io/otel v1.28.0 // indirect
 	go.opentelemetry.io/otel/metric v1.28.0 // indirect
 	go.opentelemetry.io/otel/trace v1.28.0 // indirect
-	golang.org/x/crypto v0.28.0 // indirect
+	golang.org/x/crypto v0.29.0 // indirect
 	golang.org/x/oauth2 v0.22.0 // indirect
-	golang.org/x/sys v0.26.0 // indirect
+	golang.org/x/sys v0.27.0 // indirect
 	golang.org/x/time v0.6.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240716161551-93cc26a95ae9 // indirect
 	google.golang.org/genproto v0.0.0-20240812133136-8ffd90a71988 // indirect

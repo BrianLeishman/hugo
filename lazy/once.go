@@ -18,7 +18,7 @@ import (
 	"sync/atomic"
 )
 
-// onceMore is similar to sync.Once.
+// OnceMore is similar to sync.Once.
 //
 // Additional features are:
 // * it can be reset, so the action can be repeated if needed

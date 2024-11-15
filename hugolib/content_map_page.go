@@ -109,6 +109,11 @@ type pageMap struct {
 	cfg contentMapConfig
 }
 
+// Invoked on rebuilds.
+func (m *pageMap) Reset() {
+	m.pageReverseIndex.Reset()
+}
+
 // pageTrees holds pages and resources in a tree structure for all sites/languages.
 // Each site gets its own tree set via the Shape method.
 type pageTrees struct {
@@ -919,61 +924,58 @@ func newPageMap(i int, s *Site, mcache *dynacache.Cache, pageTrees *pageTrees) *
 		s: s,
 	}
 
-	m.pageReverseIndex = &contentTreeReverseIndex{
-		initFn: func(rm map[any]contentNodeI) {
-			add := func(k string, n contentNodeI) {
-				existing, found := rm[k]
-				if found && existing != ambiguousContentNode {
-					rm[k] = ambiguousContentNode
-				} else if !found {
-					rm[k] = n
+	m.pageReverseIndex = newContentTreeTreverseIndex(func(get func(key any) (contentNodeI, bool), set func(key any, val contentNodeI)) {
+		add := func(k string, n contentNodeI) {
+			existing, found := get(k)
+			if found && existing != ambiguousContentNode {
+				set(k, ambiguousContentNode)
+			} else if !found {
+				set(k, n)
+			}
+		}
+
+		w := &doctree.NodeShiftTreeWalker[contentNodeI]{
+			Tree:     m.treePages,
+			LockType: doctree.LockTypeRead,
+			Handle: func(s string, n contentNodeI, match doctree.DimensionFlag) (bool, error) {
+				p := n.(*pageState)
+				if p.PathInfo() != nil {
+					add(p.PathInfo().BaseNameNoIdentifier(), p)
 				}
-			}
+				return false, nil
+			},
+		}
 
-			w := &doctree.NodeShiftTreeWalker[contentNodeI]{
-				Tree:     m.treePages,
-				LockType: doctree.LockTypeRead,
-				Handle: func(s string, n contentNodeI, match doctree.DimensionFlag) (bool, error) {
-					p := n.(*pageState)
-					if p.PathInfo() != nil {
-						add(p.PathInfo().BaseNameNoIdentifier(), p)
-					}
-					return false, nil
-				},
-			}
-
-			if err := w.Walk(context.Background()); err != nil {
-				panic(err)
-			}
-		},
-		contentTreeReverseIndexMap: &contentTreeReverseIndexMap{},
-	}
+		if err := w.Walk(context.Background()); err != nil {
+			panic(err)
+		}
+	})
 
 	return m
 }
 
-type contentTreeReverseIndex struct {
-	initFn func(rm map[any]contentNodeI)
-	*contentTreeReverseIndexMap
-}
-
-func (c *contentTreeReverseIndex) Reset() {
-	c.contentTreeReverseIndexMap = &contentTreeReverseIndexMap{
-		m: make(map[any]contentNodeI),
+func newContentTreeTreverseIndex(init func(get func(key any) (contentNodeI, bool), set func(key any, val contentNodeI))) *contentTreeReverseIndex {
+	return &contentTreeReverseIndex{
+		initFn: init,
+		mm:     maps.NewCache[any, contentNodeI](),
 	}
 }
 
-func (c *contentTreeReverseIndex) Get(key any) contentNodeI {
-	c.init.Do(func() {
-		c.m = make(map[any]contentNodeI)
-		c.initFn(c.contentTreeReverseIndexMap.m)
-	})
-	return c.m[key]
+type contentTreeReverseIndex struct {
+	initFn func(get func(key any) (contentNodeI, bool), set func(key any, val contentNodeI))
+	mm     *maps.Cache[any, contentNodeI]
 }
 
-type contentTreeReverseIndexMap struct {
-	init sync.Once
-	m    map[any]contentNodeI
+func (c *contentTreeReverseIndex) Reset() {
+	c.mm.Reset()
+}
+
+func (c *contentTreeReverseIndex) Get(key any) contentNodeI {
+	v, _ := c.mm.InitAndGet(key, func(get func(key any) (contentNodeI, bool), set func(key any, val contentNodeI)) error {
+		c.initFn(get, set)
+		return nil
+	})
+	return v
 }
 
 type sitePagesAssembler struct {
